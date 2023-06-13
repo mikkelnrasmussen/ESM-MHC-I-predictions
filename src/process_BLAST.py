@@ -49,10 +49,16 @@ os.makedirs(output_dir)
 # Creating a new directory for each allele and filling it with files that are pre-partioned into CV files from earlier
 # Just now with the sequences and start / stop points added in.
 for allele in list_of_alleles:
+    counter = 0
     os.makedirs(output_dir + allele)
     for file in dict_of_OG_files[allele]:
         with open(output_dir + allele + "/" + file[-4:], "w") as outfile:
             with open(file, "r") as infile:
                 for line in infile:
                     nine_mer, binding_affinity, file_allele = line.strip().split()
-                    outfile.write(nine_mer, blast_dict[nine_mer][0], binding_affinity, blast_dict[nine_mer][1], blast_dict[nine_mer][2], file_allele)
+                    try:
+                        outfile.write(nine_mer, blast_dict[nine_mer][0], binding_affinity, blast_dict[nine_mer][1], blast_dict[nine_mer][2], file_allele)
+                    except KeyError:
+                        counter += 1
+                        continue
+    print("For {}, there was a total of {} lost 9-mers".format(allele, counter), file=sys.stderr, flush=True)
