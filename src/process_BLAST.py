@@ -7,12 +7,12 @@ import sys
 parser = argparse.ArgumentParser()
 parser.add_argument("-p", "--path", required=True, help="Give the path to your data directory where the alleles are kept")
 parser.add_argument("-b", "--blast_results", required=True, help="Path to the file in which results from the BLAST run is kept")
-parser.add_argument("-o", "--output_file", required=True, help="Set output directory in which subdirectories will be located")
+parser.add_argument("-o", "--output_dir", required=True, help="Set output directory in which subdirectories will be located")
 args = parser.parse_args()
 
 root = args.path
 blast_results_file = args.blast_results
-output_dir = args.output_file
+output_dir = args.output_dir
 
 # Ensuring that the output dir ends with a / (necesarry in future)
 if not output_dir.endswith("/"):
@@ -40,8 +40,9 @@ blast_dict = {}
 
 with open(blast_results_file, "r") as blast_file:
     for line in blast_file:
-        nine_mer, sequence, pos_start, pos_end = line.strip().split("\t")
-        blast_dict[nine_mer] = (sequence, int(pos_start), int(pos_end))
+        seq_id, nine_mer, pos_start, pos_end, prot_id, sequence = line.strip().split("\t")
+        if sequence != "":
+            blast_dict[nine_mer] = (sequence, int(pos_start), int(pos_end))
 
 # Creating output directory
 os.makedirs(output_dir)
@@ -50,9 +51,9 @@ os.makedirs(output_dir)
 # Just now with the sequences and start / stop points added in.
 for allele in list_of_alleles:
     counter = 0
-    os.makedirs(output_dir + allele)
+    os.makedirs(output_dir + allele, exist_ok=True)
     for file in dict_of_OG_files[allele]:
-        with open(output_dir + allele + "/" + file[-4:], "w") as outfile:
+        with open(output_dir + allele + file[-4:], "w") as outfile:
             with open(file, "r") as infile:
                 for line in infile:
                     nine_mer, binding_affinity, file_allele = line.strip().split()
