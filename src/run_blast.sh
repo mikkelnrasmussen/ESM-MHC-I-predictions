@@ -35,6 +35,7 @@ for chunk_file in "$data_dir/query_chunk_"*.fasta; do
     # Skip identical query sequences
     echo "Creating final output: Running for chunk $chunk_file..."
     declare -A queryseqs
+    rename_if_exists "$data_dir/final_output.out"
     while IFS=$'\t' read -r qseqid qseq sseqid staxid pident length qlen slen qstart qend sstart send evalue bitscore qcovs
     do
         if [[ -z "${queryseqs[$qseq]}" ]]; then
