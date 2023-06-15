@@ -129,7 +129,6 @@ def encode_peptides(Xin, encoder_flag):
         Xout = np.zeros((batch_size, 9, n_features), dtype=np.float32)  # Assuming a fixed length of 9 for the peptide
 
         for peptide_index, row in Xin.iterrows():
-            print(f"Encoding peptide_index)
             peptide = row.peptide
             protein_sequence = row.protein
             start, stop = row.start - 1, row.stop
