@@ -25,7 +25,7 @@ for file in list_of_data_files:
     with open(file, "r") as infile:
         # The file should only contain one line
         for line in file:
-            train_epoch, loss, val_loss = line.split("\t")
+            val_loss = line[10:]
             if val_loss < lowest_val_loss:
                 lowest_val_loss = val_loss
                 file_found_within = file[-7:-4]
