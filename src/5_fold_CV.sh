@@ -34,14 +34,11 @@ do
 
                 for l in `echo $n $m | gawk '{ for ( i=0; i<5; i++ ) { if ( i != $1 && i != $2) { print i}}}'`
                 do
-                    cat f00$l >> train
-                    #cat c00$l >> train
+                    cat c00$l >> train
                 done
 
                 #run train-code
-                python $RDIR/FFNN.py --encoder $e -t train -e eval
-                #run test evaluation
-
+                python $RDIR/FFNN.py -ef $e -t train -e eval --numbers $n $m
             done
 
             # Pick model with best test perf
