@@ -1,0 +1,1 @@
+python3 process_BLAST.py -p ../data/raw_data/ -b ../data/blast/final_output.out -o ../data/processed_data
