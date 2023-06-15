@@ -1,51 +1,40 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# # Train a neural network to predict MHC ligands
+
 import torch
-#import esm
 from torch.autograd import Variable
 import torch.nn as nn
-#import torch.nn.functional as F
-import torch.optim as optim
-from torch.utils.data import TensorDataset, DataLoader
-from pytorchtools import EarlyStopping
+#import esm
 
 import numpy as np
 import pandas as pd
-import os
 import matplotlib.pyplot as plt
 from sklearn.metrics import roc_curve, auc, matthews_corrcoef
+
 from argparse import ArgumentParser
 
 
-parser = ArgumentParser(description="FFNN_model python program")
+parser = ArgumentParser(description="FFNN_evaluation python program")
 
-parser.add_argument("-t", action="store", dest="training_file", type=str, help="File with training data")
-parser.add_argument("-e", action="store", dest="evaluation_file", type=str, help="File with evaluation data")
-parser.add_argument("-epi", action="store", dest="epsilon", type=float, default=0.01, help="Epsilon (default 0.01)")
+parser.add_argument("-t", action="store", dest="test_file", type=str, help="File with test data")
 parser.add_argument("-s", action="store", dest="seed", type=int, default=1, help="Seed for random numbers (default 1)")
-parser.add_argument("-i", action="store", dest="epochs", type=int, default=3000, help="Number of epochs to train (default 3000)")
 parser.add_argument("-ef", action="store", dest="encoder_flag", type=str, help="Type of encoder used for the model (blosum, sparse, ESM)")
 parser.add_argument("-a", action="store", dest="allele", type=str, help="Allele ID (e.g A0201,...)")
-parser.add_argument("-stop", action="store_true", dest="early_stopping", help="Use Early stopping")
 parser.add_argument("-nh", action="store", dest="hidden_layer_dim", type=int, default=32, help="Number of hidden neurons (default 32)")
 parser.add_argument("--numbers", type=int, nargs='*', help="Supply the cycle numbers from bash to help name files")
 
+
 args, unknown = parser.parse_known_args()
 encoder_flag = args.encoder_flag
-training_file = args.training_file
-evaluation_file = args.evaluation_file
-epsilon = args.epsilon
-epochs = args.epochs
+test_file = args.test_file
 seed = args.seed
-early_stopping = args.early_stopping
 hidden_layer_dim = args.hidden_layer_dim
 allele = args.allele
 cycle_numbers = args.numbers
 
 
-SEED= seed
+SEED = seed
 np.random.seed(SEED)
 torch.manual_seed(SEED)
 
@@ -56,9 +45,7 @@ def load_blosum(filename):
     """
     aa = ['A', 'R', 'N' ,'D', 'C', 'Q', 'E', 'G', 'H', 'I', 'L', 'K', 'M', 'F', 'P', 'S', 'T', 'W', 'Y', 'V']
     df = pd.read_csv(filename, sep='\s+', comment='#', index_col=0)
-    df.loc[aa, aa]
     return df.loc[aa, aa]
-
 
 def create_soft_sparse():
     """
@@ -69,13 +56,6 @@ def create_soft_sparse():
     data = [[0.9 if i == j else 0.05 for j in range(size)] for i in range(size)]
     df = pd.DataFrame(data, index=aa, columns=aa)
     return df
-
-def load_ESM_1(filename):
-    """
-    Read in ESM-1 values into matrix.
-    """
-    # XXX
-    return
 
 def load_peptide_target(filename, encoder_flag):
     """
@@ -169,90 +149,55 @@ def encode_peptides(Xin, encoder_flag):
 
     return Xout, Xin.target.values
 
-
-
-def invoke(early_stopping, loss, model, implement=False):
-    if implement == False:
-        return False
-    else:
-        early_stopping(loss, model)
-        if early_stopping.early_stop:
-            print("Early stopping")
-            return True
-
-
-
-def count_parameters(model):
-    return sum(p.numel() for p in model.parameters() if p.requires_grad)
-
-
 # ## Arguments
 
-MAX_PEP_SEQ_LEN = 9 
+
+MAX_PEP_SEQ_LEN = 9
 BINDER_THRESHOLD = 0.426
 
 
-# # Main
-
 # ## Load
 
-### Windows path corrector
-#windows_path = os.getcwd()
-#linux_path = windows_path.replace('\\', '/')
-#working_dir = linux_path
+
+#ALLELE = 'A0201' #'A0301'
 
 # Blosum62 need to be in working directory
 blosum_file_62 = "../data/matrices/BLOSUM62"
 
-# Files for debugging
-#train_data = working_dir + "/../data/%s/train_BA" % ALLELE
-#valid_data = working_dir + "/../data/%s/valid_BA" % ALLELE
-
-# Files for training
-train_data = training_file
-valid_data = evaluation_file
+# Files for testing
+test_data = test_file
 
 
-train_raw = load_peptide_target(train_data, encoder_flag)
-valid_raw = load_peptide_target(valid_data, encoder_flag)
-print(train_raw.loc[0:2, :])
+test_raw = load_peptide_target(test_data, encoder_flag)
 
 
 # ### Encode data
-# For debugging
-# encoder_flag = 'blosum'
-#x_train_, y_train_ = encode_peptides(train_raw.loc[0:2, :], encoder_flag)
-#x_valid_, y_valid_ = encode_peptides(valid_raw.loc[0:2, :], encoder_flag)
-x_train_, y_train_ = encode_peptides(train_raw, encoder_flag)
-x_valid_, y_valid_ = encode_peptides(valid_raw, encoder_flag)
-print(y_train_[0:2])
-#quit()
 
-# Check the data dimensions for the train set and validation set (batch_size, MAX_PEP_SEQ_LEN, n_features)
 
-#print(x_train_.shape)
-#print(x_valid_.shape)
+x_test_, y_test_ = encode_peptides(test_raw, encoder_flag)
 
 
 # ### Flatten tensors
-x_train_ = x_train_.reshape(x_train_.shape[0], -1)
-x_valid_ = x_valid_.reshape(x_valid_.shape[0], -1)
+
+
+x_test_ = x_test_.reshape(x_test_.shape[0], -1)
+x_test_.shape[1]
 
 
 
-batch_size = x_train_.shape[0]
-n_features = x_train_.shape[1]
+n_features = x_test_.shape[1]
 
 
 # ### Make data iterable
-x_train = Variable(torch.from_numpy(x_train_.astype('float32')))
-y_train = Variable(torch.from_numpy(y_train_.astype('float32'))).view(-1, 1)
 
-x_valid = Variable(torch.from_numpy(x_valid_.astype('float32')))
-y_valid = Variable(torch.from_numpy(y_valid_.astype('float32'))).view(-1, 1)
+
+x_test = Variable(torch.from_numpy(x_test_.astype('float32')))
+y_test = Variable(torch.from_numpy(y_test_.astype('float32'))).view(-1, 1)
 
 
 # ## Build Model
+
+
 class Net(nn.Module):
 
     def __init__(self, n_features, n_l1):
@@ -273,118 +218,80 @@ class Net(nn.Module):
 
 # ## Select Hyper-parameters
 
-def init_weights(m):
-    """
-    https://pytorch.org/docs/master/nn.init.html
-    """
-    if isinstance(m, nn.Linear):
-        nn.init.xavier_uniform_(m.weight)
-        nn.init.constant_(m.bias, 0) # alternative command: m.bias.data.fill_(0.01)
-
-EPOCHS = epochs
-MINI_BATCH_SIZE = 100
 N_HIDDEN_NEURONS = hidden_layer_dim
-LEARNING_RATE = epsilon
-PATIENCE = EPOCHS // 10
-
-
-# ### Path where to save model
-model_dir = "../models/%s/%s/%s/" % (allele, encoder_flag, cycle_numbers[0])
-os.makedirs(model_dir, exist_ok=True)
-model_filename = "%s_%s_%s_%s_net.pt" % (allele, encoder_flag, cycle_numbers[0], cycle_numbers[1])
-perf_filename = "%s_%s_%s_%s_perf.txt" % (allele, encoder_flag, cycle_numbers[0], cycle_numbers[1])
-model_PATH = model_dir + model_filename
-perf_PATH = model_dir + perf_filename
-
-# ## Compile Model
-
-net = Net(n_features, N_HIDDEN_NEURONS)
-#net.apply(init_weights)
-
-#count_parameters(net)
-
-optimizer = optim.SGD(net.parameters(), lr=LEARNING_RATE)
 criterion = nn.MSELoss()
 
 
-# ## Train Model
+# ## Evaluation
 
-# No mini-batch loading
-# mini-batch loading
-def train(output_file):
-    train_loss, valid_loss = [], []
-
-    early_stopping = EarlyStopping(patience=PATIENCE, path=model_PATH)
-
-    for epoch in range(EPOCHS):
-        net.train()
-        pred = net(x_train)
-        loss = criterion(pred, y_train)
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        train_loss.append(loss.data)
-
-        #if epoch % (EPOCHS//10) == 0:
-            #print('Train Epoch: {}\tLoss: {:.6f}'.format(epoch, loss.data))
-
-        net.eval()
-        pred = net(x_valid)
-        loss = criterion(pred, y_valid)  
-        valid_loss.append(loss.data)
-
-        if invoke(early_stopping, valid_loss[-1], net, implement=True):
-            print(valid_loss[-1])
-            net.load_state_dict(torch.load(model_PATH))
-            break
-            
-    return net, train_loss, valid_loss
+# ### Load model
+model_dir = "../models/%s/%s/%s/" % (allele, encoder_flag, cycle_numbers[0])
+model_filename = "%s_%s_%s_%s_net.pt" % (allele, encoder_flag, cycle_numbers[0], cycle_numbers[1])
+test_perf_filename = "%s_%s_%s_%s_test_perf.txt" % (allele, encoder_flag, cycle_numbers[0], cycle_numbers[1])
+model_PATH = model_dir + model_filename
+test_perf_PATH = model_dir + test_perf_filename
 
 
+net = Net(n_features, N_HIDDEN_NEURONS)
+net.load_state_dict(torch.load(model_PATH))
 
-# Train with mini_batches
-train_loader = DataLoader(dataset=TensorDataset(x_train, y_train), batch_size=MINI_BATCH_SIZE, shuffle=True)
-valid_loader = DataLoader(dataset=TensorDataset(x_valid, y_valid), batch_size=MINI_BATCH_SIZE, shuffle=True)
 
-def train_with_minibatches(output_file):
+# ### Predict on test set
+net.eval()
+pred = net(x_test)
+loss = criterion(pred, y_test)
+
+
+# ### Transform targets to class
+y_test_class = np.where(y_test.flatten() >= BINDER_THRESHOLD, 1, 0)
+y_pred_class = np.where(pred.flatten() >= BINDER_THRESHOLD, 1, 0)
+
+
+# ### Receiver Operating Caracteristic (ROC) curve
+def plot_roc_curve(peptide_length=[9]):
+    plt.title('Receiver Operating Characteristic')
+    plt.plot(fpr, tpr, label = 'AUC = %0.2f (%smer)' %(roc_auc, '-'.join([str(i) for i in peptide_length])))
+    plt.legend(loc = 'lower right')
+    plt.plot([0, 1], [0, 1], c='black', linestyle='--')
+    plt.ylabel('True Positive Rate')
+    plt.xlabel('False Positive Rate')
+
+
+
+# Combining targets and prediction values with peptide length in a dataframe
+pred_per_len = pd.DataFrame([test_raw.peptide.str.len().to_list(),
+                             y_test_class,
+                             pred.flatten().detach().numpy()],
+                            index=['peptide_length','target','prediction']).T
+
+#plt.figure(figsize=(7,7))
+# For each peptide length compute AUC and plot ROC
+for length, grp in pred_per_len.groupby('peptide_length'):
+    fpr, tpr, threshold = roc_curve(grp.target, grp.prediction)
+    roc_auc = auc(fpr, tpr)
     
-    train_loss, valid_loss = [], []
-
-    early_stopping = EarlyStopping(patience=PATIENCE, path=model_PATH)
-    for epoch in range(EPOCHS):
-        batch_loss = 0
-        net.train()
-        for x_train, y_train in train_loader:
-            pred = net(x_train)
-            loss = criterion(pred, y_train)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            batch_loss += loss.data
-        train_loss.append(batch_loss / len(train_loader))
-
-        batch_loss = 0
-        net.eval()
-        for x_valid, y_valid in valid_loader:
-            pred = net(x_valid)
-            loss = criterion(pred, y_valid)
-            batch_loss += loss.data
-        valid_loss.append(batch_loss / len(valid_loader))
-        
-        if epoch % (EPOCHS//10) == 0:
-            print('Train Epoch: {}\tLoss: {:.6f}\tVal Loss: {:.6f}'.format(epoch, train_loss[-1], valid_loss[-1]))
-            with open(perf_PATH, 'w') as f:
-                f.write('Val Loss: {:.6f}'.format(valid_loss[-1]))  
-                
-        if invoke(early_stopping, valid_loss[-1], net, implement=True):
-            net.load_state_dict(torch.load(model_PATH))
-            break
-          
-    return net, train_loss, valid_loss
+    #plot_roc_curve(peptide_length=[int(length)])
+#print('AUC: ', roc_auc)
 
 
-# ### Train model
+# ### Matthew's Correlation Coefficient (MCC)
+mcc = matthews_corrcoef(y_test_class, y_pred_class)
+#print('MCC: ', mcc)
 
-#net, train_loss, valid_loss = train(perf_PATH)                   # no mini-batch loading
-net, train_loss, valid_loss = train_with_minibatches(perf_PATH)   # mini-batch loading
+"""
+def plot_mcc():
+    plt.title('Matthews Correlation Coefficient')
+    plt.scatter(y_test.flatten().detach().numpy(), pred.flatten().detach().numpy(), label = 'MCC = %0.2f' % mcc)
+    plt.legend(loc = 'lower right')
+    plt.ylabel('Predicted')
+    plt.xlabel('Validation targets')
+    plt.show()
+
+plot_mcc()
+
+"""
+text = 'AUC: ' + str(roc_auc) + '\n' + 'MCC: ' + str(mcc)
+with open(test_perf_PATH, 'w') as f:
+    f.write(text)
+
 
