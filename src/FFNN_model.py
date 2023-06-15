@@ -3,7 +3,7 @@
 
 # # Train a neural network to predict MHC ligands
 import torch
-#import esm
+import esm
 from torch.autograd import Variable
 import torch.nn as nn
 #import torch.nn.functional as F
@@ -14,6 +14,7 @@ from pytorchtools import EarlyStopping
 import numpy as np
 import pandas as pd
 import os
+import math
 import matplotlib.pyplot as plt
 from sklearn.metrics import roc_curve, auc, matthews_corrcoef
 from argparse import ArgumentParser
@@ -134,37 +135,50 @@ def encode_peptides(Xin, encoder_flag):
         Xout = np.zeros((batch_size, 9, n_features), dtype=np.float32)  # Assuming a fixed length of 9 for the peptide
 
         for peptide_index, row in Xin.iterrows():
+            peptide = row.peptide
             protein_sequence = row.protein
-            start, stop = row.start, row.stop
+            start, stop = row.start - 1, row.stop
+            remainder = 1024 - 9 - 2 # The 9 is for the 9-mer and the 2 is the CLS and EOS tokens
+            max_extract = math.floor(remainder / 2)
+            assert protein_sequence[start:stop] == peptide, f"Expected {peptide} at position {start}-{stop}, but found {protein_sequence[start:stop]}"
 
             # Calculate how much of the sequence before and after the peptide we can include
-            before = min(506, start)  # number of amino acids before the peptide
-            after = min(506, len(protein_sequence) - stop)  # number of amino acids after the peptide
+            before = min(max_extract, start)  # number of amino acids before the peptide
+            after = min(max_extract, len(protein_sequence) - stop)  # number of amino acids after the peptide
 
-            # If we can't include 506 amino acids on both sides, take more from the other side
-            if before < 506:
-                after = min(len(protein_sequence) - stop, 1014 - before)
-            elif after < 506:
-                before = min(start, 1014 - after)
+            # If we can't include max number of amino acids on both sides, take more from the other side
+            if before < max_extract:
+                after = min(len(protein_sequence) - stop, remainder - before)
+            elif after < max_extract:
+                before = min(start, remainder - after)
 
             # Extract the part of the protein sequence we're interested in
             extract_start = start - before
             extract_stop = stop + after
             extract_sequence = protein_sequence[extract_start:extract_stop]
-            print(len(extract_sequence))
-
-            data = [["protein", extract_sequence]]
+            
+            data = [[peptide, extract_sequence]]
             batch_labels, batch_strs, batch_tokens = batch_converter(data)
-            print(batch_tokens)
 
             with torch.no_grad():
                 results = model(batch_tokens, repr_layers=[33], return_contacts=False)
             token_representations = results["representations"][33]
 
+            # Identify indices of CLS and EOS tokens
+            cls_idx = (batch_tokens == model.cls_idx).nonzero(as_tuple=True)[1]
+            eos_idx = (batch_tokens == model.eos_idx).nonzero(as_tuple=True)[1]
+
+            # Exclude CLS and EOS tokens from the token representations
+            token_representations = token_representations[0, cls_idx+1:eos_idx]
+            assert len(extract_sequence) == len(token_representations), f"Expected length of sequence ({len(extract_sequence)}) to be equal to the length of the representation ({len(token_representations)})"
+
             # The peptide is now at a new position in the sequence
             new_start = before
             new_stop = new_start + 9
-            peptide_representation = token_representations[0, new_start:new_stop]
+            assert extract_sequence[new_start:new_stop] == peptide, f"Expected {peptide} at position {start}-{stop}, but found {extract_sequence[new_start:new_stop]}"
+
+            # Check that the peptide sequence is in the expected location
+            peptide_representation = token_representations[new_start:new_stop]
             Xout[peptide_index] = peptide_representation.cpu().numpy()
 
     return Xout, Xin.target.values
@@ -221,12 +235,10 @@ print(train_raw.loc[0:2, :])
 # ### Encode data
 # For debugging
 # encoder_flag = 'blosum'
-#x_train_, y_train_ = encode_peptides(train_raw.loc[0:2, :], encoder_flag)
-#x_valid_, y_valid_ = encode_peptides(valid_raw.loc[0:2, :], encoder_flag)
-x_train_, y_train_ = encode_peptides(train_raw, encoder_flag)
-x_valid_, y_valid_ = encode_peptides(valid_raw, encoder_flag)
-print(y_train_[0:2])
-#quit()
+x_train_, y_train_ = encode_peptides(train_raw.loc[0:2, :], encoder_flag)
+x_valid_, y_valid_ = encode_peptides(valid_raw.loc[0:2, :], encoder_flag)
+print(x_train_[0:2].shape)
+quit()
 
 # Check the data dimensions for the train set and validation set (batch_size, MAX_PEP_SEQ_LEN, n_features)
 
@@ -384,7 +396,6 @@ def train_with_minibatches(output_file):
 
 
 # ### Train model
-
 #net, train_loss, valid_loss = train(perf_PATH)                   # no mini-batch loading
 net, train_loss, valid_loss = train_with_minibatches(perf_PATH)   # mini-batch loading
 
