@@ -68,7 +68,7 @@ def create_soft_sparse():
     """
     aa = ['A', 'R', 'N' ,'D', 'C', 'Q', 'E', 'G', 'H', 'I', 'L', 'K', 'M', 'F', 'P', 'S', 'T', 'W', 'Y', 'V']
     size = len(aa)
-    data = [[0.95 if i == j else 0.05 for j in range(size)] for i in range(size)]
+    data = [[0.9 if i == j else 0.05 for j in range(size)] for i in range(size)]
     df = pd.DataFrame(data, index=aa, columns=aa)
     return df
 
@@ -116,9 +116,32 @@ def encode_peptides(Xin, encoder_flag):
             for aa_index in range(len(row.peptide)):
                 Xout[peptide_index, aa_index] = sparse[ row.peptide[aa_index] ].values
 
-    elif encoder_flag == "ESM":
-        # XXX
-        pass
+   elif encoder_flag == "ESM":
+        # Load ESM-1b model
+        model, alphabet = esm.pretrained.esm1b_t33_650M_UR50S()
+        batch_converter = alphabet.get_batch_converter()
+
+        n_features = model.args.embed_dim  # ESM model's embedding dimension
+        Xout = np.zeros((batch_size, 9, n_features), dtype=np.float32)  # Assuming a fixed length of 9 for the peptide
+
+        for peptide_index, row in Xin.iterrows():
+            protein_sequence = row.protein  # Assuming 'protein' column contains the protein sequences
+            start, stop = row.start, row.stop  # Assuming 'start' and 'stop' columns contain the start and stop positions of the peptide in the protein sequence
+            data = [["protein", protein_sequence]]
+            batch_labels, batch_strs, batch_tokens = batch_converter(data)
+
+            # Compute token representations
+            with torch.no_grad():
+                results = model(batch_tokens, repr_layers=[6], return_contacts=False)
+            token_representations = results["representations"][6]
+
+            # Extract the 9-mer peptide sequence representation
+            # The sequence tokens are given an extra start and end token, 
+            # so we add 1 to the start and stop indices to account for the start token
+            peptide_representation = token_representations[0, start + 1:stop + 1]
+            
+            # Assuming you're running this on a GPU. If not, you can remove the .cpu()
+            Xout[peptide_index] = peptide_representation.cpu().numpy()  
 
     return Xout, Xin.target.values
 
