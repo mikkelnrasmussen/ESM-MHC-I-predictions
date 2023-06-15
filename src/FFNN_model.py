@@ -289,7 +289,7 @@ PATIENCE = EPOCHS // 10
 
 
 # ### Path where to save model
-model_dir = "../models/%s/%s/%s/" % (allele, encoder_flag, cycle_numbers[0])
+model_dir = "models/"
 os.makedirs(model_dir, exist_ok=True)
 model_filename = "%s_%s_%s_%s_net.pt" % (allele, encoder_flag, cycle_numbers[0], cycle_numbers[1])
 perf_filename = "%s_%s_%s_%s_perf.txt" % (allele, encoder_flag, cycle_numbers[0], cycle_numbers[1])
