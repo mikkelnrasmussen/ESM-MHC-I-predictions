@@ -2,10 +2,8 @@
 # coding: utf-8
 
 # # Train a neural network to predict MHC ligands
-
-
-
 import torch
+import esm
 from torch.autograd import Variable
 import torch.nn as nn
 #import torch.nn.functional as F
@@ -79,12 +77,22 @@ def load_ESM_1(filename):
     # XXX
     return
 
-def load_peptide_target(filename):
+def load_peptide_target(filename, encoder_flag):
     """
     Read amino acid sequence of peptides and
     corresponding log transformed IC50 binding values from text file.
     """
-    df = pd.read_csv(filename, sep='\s+', usecols=[0,1], names=['peptide','target'])
+    if encoder_flag != "ESM":
+        df = pd.read_csv(filename, 
+                         sep = "\s+", 
+                         usecols = [0,2], 
+                         names = ["peptide", "target"])
+    else:
+        df = pd.read_csv(filename, 
+                         sep = "\s+", 
+                         usecols = [0, 1, 2, 3, 4], 
+                         names = ["peptide", "protein", "target", "start", "stop"])
+        
     return df.sort_values(by='target', ascending=False).reset_index(drop=True)
 
 
@@ -115,33 +123,49 @@ def encode_peptides(Xin, encoder_flag):
         for peptide_index, row in Xin.iterrows():
             for aa_index in range(len(row.peptide)):
                 Xout[peptide_index, aa_index] = sparse[ row.peptide[aa_index] ].values
-
-   elif encoder_flag == "ESM":
+    
+    elif encoder_flag == "ESM":
+        
         # Load ESM-1b model
         model, alphabet = esm.pretrained.esm1b_t33_650M_UR50S()
         batch_converter = alphabet.get_batch_converter()
-
+        
         n_features = model.args.embed_dim  # ESM model's embedding dimension
         Xout = np.zeros((batch_size, 9, n_features), dtype=np.float32)  # Assuming a fixed length of 9 for the peptide
 
         for peptide_index, row in Xin.iterrows():
-            protein_sequence = row.protein  # Assuming 'protein' column contains the protein sequences
-            start, stop = row.start, row.stop  # Assuming 'start' and 'stop' columns contain the start and stop positions of the peptide in the protein sequence
-            data = [["protein", protein_sequence]]
+            protein_sequence = row.protein
+            start, stop = row.start, row.stop
+
+            # Calculate how much of the sequence before and after the peptide we can include
+            before = min(506, start)  # number of amino acids before the peptide
+            after = min(506, len(protein_sequence) - stop)  # number of amino acids after the peptide
+
+            # If we can't include 506 amino acids on both sides, take more from the other side
+            if before < 506:
+                after = min(len(protein_sequence) - stop, 1014 - before)
+            elif after < 506:
+                before = min(start, 1014 - after)
+
+            # Extract the part of the protein sequence we're interested in
+            extract_start = start - before
+            extract_stop = stop + after
+            extract_sequence = protein_sequence[extract_start:extract_stop]
+            print(len(extract_sequence))
+
+            data = [["protein", extract_sequence]]
             batch_labels, batch_strs, batch_tokens = batch_converter(data)
+            print(batch_tokens)
 
-            # Compute token representations
             with torch.no_grad():
-                results = model(batch_tokens, repr_layers=[6], return_contacts=False)
-            token_representations = results["representations"][6]
+                results = model(batch_tokens, repr_layers=[33], return_contacts=False)
+            token_representations = results["representations"][33]
 
-            # Extract the 9-mer peptide sequence representation
-            # The sequence tokens are given an extra start and end token, 
-            # so we add 1 to the start and stop indices to account for the start token
-            peptide_representation = token_representations[0, start + 1:stop + 1]
-            
-            # Assuming you're running this on a GPU. If not, you can remove the .cpu()
-            Xout[peptide_index] = peptide_representation.cpu().numpy()  
+            # The peptide is now at a new position in the sequence
+            new_start = before
+            new_stop = new_start + 9
+            peptide_representation = token_representations[0, new_start:new_stop]
+            Xout[peptide_index] = peptide_representation.cpu().numpy()
 
     return Xout, Xin.target.values
 
@@ -173,14 +197,12 @@ BINDER_THRESHOLD = 0.426
 # ## Load
 
 ### Windows path corrector
-windows_path = os.getcwd()
-linux_path = windows_path.replace('\\', '/')
-working_dir = linux_path
+#windows_path = os.getcwd()
+#linux_path = windows_path.replace('\\', '/')
+#working_dir = linux_path
 
-
-# ESM-1 and Blosum62 need to be in working directory
-blosum_file_62 = working_dir + "/BLOSUM62"
-ESM_1_file = working_dir + "/ESM-1"
+# Blosum62 need to be in working directory
+blosum_file_62 = "../data/matrices/BLOSUM62"
 
 # Files for debugging
 #train_data = working_dir + "/../data/%s/train_BA" % ALLELE
@@ -191,17 +213,17 @@ train_data = training_file
 valid_data = evaluation_file
 
 
-train_raw = load_peptide_target(train_data)
-valid_raw = load_peptide_target(valid_data)
+train_raw = load_peptide_target(train_data, encoder_flag)
+valid_raw = load_peptide_target(valid_data, encoder_flag)
+print(train_raw.loc[0:2, :])
 
 
 # ### Encode data
-
 # For debugging
 # encoder_flag = 'blosum'
-
-x_train_, y_train_ = encode_peptides(train_raw, encoder_flag)
-x_valid_, y_valid_ = encode_peptides(valid_raw, encoder_flag)
+x_train_, y_train_ = encode_peptides(train_raw.loc[0:2, :], encoder_flag)
+x_valid_, y_valid_ = encode_peptides(valid_raw.loc[0:2, :], encoder_flag)
+quit()
 
 # Check the data dimensions for the train set and validation set (batch_size, MAX_PEP_SEQ_LEN, n_features)
 
