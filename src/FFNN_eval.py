@@ -22,16 +22,21 @@ parser.add_argument("-s", action="store", dest="seed", type=int, default=1, help
 parser.add_argument("-ef", action="store", dest="encoder_flag", type=str, help="Type of encoder used for the model (blosum, sparse, ESM)")
 parser.add_argument("-a", action="store", dest="allele", type=str, help="Allele ID (e.g A0201,...)")
 parser.add_argument("-nh", action="store", dest="hidden_layer_dim", type=int, default=32, help="Number of hidden neurons (default 32)")
+parser.add_argument("-o", "--output_file", help="Give path to where you wish the output file to be stored")
+parser.add_argument("-m", "--model", help="Give the path to the model you wish to test on")
 parser.add_argument("--numbers", type=int, nargs='*', help="Supply the cycle numbers from bash to help name files")
 
 
 args, unknown = parser.parse_known_args()
+
 encoder_flag = args.encoder_flag
 test_file = args.test_file
 seed = args.seed
 hidden_layer_dim = args.hidden_layer_dim
 allele = args.allele
 cycle_numbers = args.numbers
+test_perf_PATH = args.output_file
+model_PATH = args.model
 
 
 SEED = seed
@@ -225,11 +230,11 @@ criterion = nn.MSELoss()
 # ## Evaluation
 
 # ### Load model
-model_dir = "../models/%s/%s/%s/" % (allele, encoder_flag, cycle_numbers[0])
-model_filename = "%s_%s_%s_%s_net.pt" % (allele, encoder_flag, cycle_numbers[0], cycle_numbers[1])
-test_perf_filename = "%s_%s_%s_%s_test_perf.txt" % (allele, encoder_flag, cycle_numbers[0], cycle_numbers[1])
-model_PATH = model_dir + model_filename
-test_perf_PATH = model_dir + test_perf_filename
+#model_dir = "../models/%s/%s/%s/" % (allele, encoder_flag, cycle_numbers[0])
+#model_filename = "%s_%s_%s_%s_net.pt" % (allele, encoder_flag, cycle_numbers[0], cycle_numbers[1])
+#test_perf_filename = "%s_%s_%s_%s_test_perf.txt" % (allele, encoder_flag, cycle_numbers[0], cycle_numbers[1])
+#model_PATH = model_dir + model_filename
+#test_perf_PATH = model_dir + test_perf_filename
 
 
 net = Net(n_features, N_HIDDEN_NEURONS)
@@ -290,7 +295,7 @@ def plot_mcc():
 plot_mcc()
 
 """
-text = 'AUC: ' + str(roc_auc) + '\n' + 'MCC: ' + str(mcc)
+text = "The model for cycle " + cycle_numbers[0] + ": " + model_PATH[-10:] + ". Yielded the following:" + "\n" + 'AUC: ' + str(roc_auc) + '\n' + 'MCC: ' + str(mcc)
 with open(test_perf_PATH, 'w') as f:
     f.write(text)
 
