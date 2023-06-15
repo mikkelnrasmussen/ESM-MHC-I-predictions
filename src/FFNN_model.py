@@ -10,7 +10,6 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader
 from pytorchtools import EarlyStopping
-
 import numpy as np
 import pandas as pd
 import os
@@ -29,6 +28,7 @@ parser.add_argument("-s", action="store", dest="seed", type=int, default=1, help
 parser.add_argument("-i", action="store", dest="epochs", type=int, default=3000, help="Number of epochs to train (default 3000)")
 parser.add_argument("-ef", action="store", dest="encoder_flag", type=str, help="Type of encoder used for the model (blosum, sparse, ESM)")
 parser.add_argument("-a", action="store", dest="allele", type=str, help="Allele ID (e.g A0201,...)")
+parser.add_argument("-m", action="store_true", dest="mini_batches", type=str, help="Use mini-batches for gradient decent training")
 parser.add_argument("-stop", action="store_true", dest="early_stopping", help="Use Early stopping")
 parser.add_argument("-nh", action="store", dest="hidden_layer_dim", type=int, default=32, help="Number of hidden neurons (default 32)")
 parser.add_argument("--numbers", type=int, nargs='*', help="Supply the cycle numbers from bash to help name files")
@@ -40,6 +40,7 @@ evaluation_file = args.evaluation_file
 epsilon = args.epsilon
 epochs = args.epochs
 seed = args.seed
+mini_batches = args.mini_batches
 early_stopping = args.early_stopping
 hidden_layer_dim = args.hidden_layer_dim
 allele = args.allele
@@ -71,13 +72,6 @@ def create_soft_sparse():
     df = pd.DataFrame(data, index=aa, columns=aa)
     return df
 
-def load_ESM_1(filename):
-    """
-    Read in ESM-1 values into matrix.
-    """
-    # XXX
-    return
-
 def load_peptide_target(filename, encoder_flag):
     """
     Read amino acid sequence of peptides and
@@ -100,7 +94,7 @@ def load_peptide_target(filename, encoder_flag):
 
 def encode_peptides(Xin, encoder_flag):
     """
-    Encode AA seq of peptides using BLOSUM50.
+    Encode AA seq of peptides using soft-sparse, BLOSUM62 or ESM encoding.
     Returns a tensor of encoded peptides of shape (batch_size, MAX_PEP_SEQ_LEN, n_features)
     """
     batch_size = len(Xin)
@@ -135,6 +129,7 @@ def encode_peptides(Xin, encoder_flag):
         Xout = np.zeros((batch_size, 9, n_features), dtype=np.float32)  # Assuming a fixed length of 9 for the peptide
 
         for peptide_index, row in Xin.iterrows():
+            print(f"Encoding peptide_index)
             peptide = row.peptide
             protein_sequence = row.protein
             start, stop = row.start - 1, row.stop
@@ -176,7 +171,7 @@ def encode_peptides(Xin, encoder_flag):
             new_start = before
             new_stop = new_start + 9
             assert extract_sequence[new_start:new_stop] == peptide, f"Expected {peptide} at position {start}-{stop}, but found {extract_sequence[new_start:new_stop]}"
-
+            
             # Check that the peptide sequence is in the expected location
             peptide_representation = token_representations[new_start:new_stop]
             Xout[peptide_index] = peptide_representation.cpu().numpy()
@@ -194,77 +189,45 @@ def invoke(early_stopping, loss, model, implement=False):
             print("Early stopping")
             return True
 
-
-
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-# ## Arguments
-
+## Arguments
 MAX_PEP_SEQ_LEN = 9 
 BINDER_THRESHOLD = 0.426
 
-
 # # Main
-
 # ## Load
-
-### Windows path corrector
-#windows_path = os.getcwd()
-#linux_path = windows_path.replace('\\', '/')
-#working_dir = linux_path
-
 # Blosum62 need to be in working directory
 blosum_file_62 = "../data/matrices/BLOSUM62"
-
-# Files for debugging
-#train_data = working_dir + "/../data/%s/train_BA" % ALLELE
-#valid_data = working_dir + "/../data/%s/valid_BA" % ALLELE
 
 # Files for training
 train_data = training_file
 valid_data = evaluation_file
 
-
+# Extract peptide and target values
 train_raw = load_peptide_target(train_data, encoder_flag)
 valid_raw = load_peptide_target(valid_data, encoder_flag)
-print(train_raw.loc[0:2, :])
 
+### Encode data
+x_train_, y_train_ = encode_peptides(train_raw, encoder_flag)
+x_valid_, y_valid_ = encode_peptides(valid_raw, encoder_flag)
 
-# ### Encode data
-# For debugging
-# encoder_flag = 'blosum'
-x_train_, y_train_ = encode_peptides(train_raw.loc[0:2, :], encoder_flag)
-x_valid_, y_valid_ = encode_peptides(valid_raw.loc[0:2, :], encoder_flag)
-print(x_train_[0:2].shape)
-quit()
-
-# Check the data dimensions for the train set and validation set (batch_size, MAX_PEP_SEQ_LEN, n_features)
-
-#print(x_train_.shape)
-#print(x_valid_.shape)
-
-
-# ### Flatten tensors
+### Flatten tensors
 x_train_ = x_train_.reshape(x_train_.shape[0], -1)
 x_valid_ = x_valid_.reshape(x_valid_.shape[0], -1)
-
-
-
 batch_size = x_train_.shape[0]
 n_features = x_train_.shape[1]
 
-
-# ### Make data iterable
+### Make data iterable
 x_train = Variable(torch.from_numpy(x_train_.astype('float32')))
 y_train = Variable(torch.from_numpy(y_train_.astype('float32'))).view(-1, 1)
 
 x_valid = Variable(torch.from_numpy(x_valid_.astype('float32')))
 y_valid = Variable(torch.from_numpy(y_valid_.astype('float32'))).view(-1, 1)
 
-
-# ## Build Model
+## Build Model
 class Net(nn.Module):
 
     def __init__(self, n_features, n_l1):
@@ -396,6 +359,7 @@ def train_with_minibatches(output_file):
 
 
 # ### Train model
-#net, train_loss, valid_loss = train(perf_PATH)                   # no mini-batch loading
-net, train_loss, valid_loss = train_with_minibatches(perf_PATH)   # mini-batch loading
-
+if mini_batches:
+    net, train_loss, valid_loss = train_with_minibatches(perf_PATH)   # mini-batch loading
+else:
+    net, train_loss, valid_loss = train(perf_PATH)   # no mini-batch loading
