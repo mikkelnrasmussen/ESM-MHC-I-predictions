@@ -2,20 +2,18 @@
 # coding: utf-8
 
 # # Train a neural network to predict MHC ligands
-
-
-
 import torch
+import esm
 from torch.autograd import Variable
 import torch.nn as nn
 #import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader
 from pytorchtools import EarlyStopping
-
 import numpy as np
 import pandas as pd
 import os
+import math
 import matplotlib.pyplot as plt
 from sklearn.metrics import roc_curve, auc, matthews_corrcoef
 from argparse import ArgumentParser
@@ -30,8 +28,10 @@ parser.add_argument("-s", action="store", dest="seed", type=int, default=1, help
 parser.add_argument("-i", action="store", dest="epochs", type=int, default=3000, help="Number of epochs to train (default 3000)")
 parser.add_argument("-ef", action="store", dest="encoder_flag", type=str, help="Type of encoder used for the model (blosum, sparse, ESM)")
 parser.add_argument("-a", action="store", dest="allele", type=str, help="Allele ID (e.g A0201,...)")
+parser.add_argument("-m", action="store_true", dest="mini_batches", type=str, help="Use mini-batches for gradient decent training")
 parser.add_argument("-stop", action="store_true", dest="early_stopping", help="Use Early stopping")
 parser.add_argument("-nh", action="store", dest="hidden_layer_dim", type=int, default=32, help="Number of hidden neurons (default 32)")
+parser.add_argument("--numbers", type=int, nargs='*', help="Supply the cycle numbers from bash to help name files")
 
 args, unknown = parser.parse_known_args()
 encoder_flag = args.encoder_flag
@@ -40,9 +40,11 @@ evaluation_file = args.evaluation_file
 epsilon = args.epsilon
 epochs = args.epochs
 seed = args.seed
+mini_batches = args.mini_batches
 early_stopping = args.early_stopping
 hidden_layer_dim = args.hidden_layer_dim
 allele = args.allele
+cycle_numbers = args.numbers
 
 
 SEED= seed
@@ -70,26 +72,29 @@ def create_soft_sparse():
     df = pd.DataFrame(data, index=aa, columns=aa)
     return df
 
-def load_ESM_1(filename):
-    """
-    Read in ESM-1 values into matrix.
-    """
-    # XXX
-    return
-
-def load_peptide_target(filename):
+def load_peptide_target(filename, encoder_flag):
     """
     Read amino acid sequence of peptides and
     corresponding log transformed IC50 binding values from text file.
     """
-    df = pd.read_csv(filename, sep='\s+', usecols=[0,1], names=['peptide','target'])
+    if encoder_flag != "ESM":
+        df = pd.read_csv(filename, 
+                         sep = "\s+", 
+                         usecols = [0,1], 
+                         names = ["peptide", "target"])
+    else:
+        df = pd.read_csv(filename, 
+                         sep = "\s+", 
+                         usecols = [0, 1, 2, 3, 4], 
+                         names = ["peptide", "protein", "target", "start", "stop"])
+        
     return df.sort_values(by='target', ascending=False).reset_index(drop=True)
 
 
 
 def encode_peptides(Xin, encoder_flag):
     """
-    Encode AA seq of peptides using BLOSUM50.
+    Encode AA seq of peptides using soft-sparse, BLOSUM62 or ESM encoding.
     Returns a tensor of encoded peptides of shape (batch_size, MAX_PEP_SEQ_LEN, n_features)
     """
     batch_size = len(Xin)
@@ -113,33 +118,63 @@ def encode_peptides(Xin, encoder_flag):
         for peptide_index, row in Xin.iterrows():
             for aa_index in range(len(row.peptide)):
                 Xout[peptide_index, aa_index] = sparse[ row.peptide[aa_index] ].values
-
-   elif encoder_flag == "ESM":
+    
+    elif encoder_flag == "ESM":
+        
         # Load ESM-1b model
         model, alphabet = esm.pretrained.esm1b_t33_650M_UR50S()
         batch_converter = alphabet.get_batch_converter()
-
+        
         n_features = model.args.embed_dim  # ESM model's embedding dimension
         Xout = np.zeros((batch_size, 9, n_features), dtype=np.float32)  # Assuming a fixed length of 9 for the peptide
 
         for peptide_index, row in Xin.iterrows():
-            protein_sequence = row.protein  # Assuming 'protein' column contains the protein sequences
-            start, stop = row.start, row.stop  # Assuming 'start' and 'stop' columns contain the start and stop positions of the peptide in the protein sequence
-            data = [["protein", protein_sequence]]
+            print(f"Encoding peptide_index)
+            peptide = row.peptide
+            protein_sequence = row.protein
+            start, stop = row.start - 1, row.stop
+            remainder = 1024 - 9 - 2 # The 9 is for the 9-mer and the 2 is the CLS and EOS tokens
+            max_extract = math.floor(remainder / 2)
+            assert protein_sequence[start:stop] == peptide, f"Expected {peptide} at position {start}-{stop}, but found {protein_sequence[start:stop]}"
+
+            # Calculate how much of the sequence before and after the peptide we can include
+            before = min(max_extract, start)  # number of amino acids before the peptide
+            after = min(max_extract, len(protein_sequence) - stop)  # number of amino acids after the peptide
+
+            # If we can't include max number of amino acids on both sides, take more from the other side
+            if before < max_extract:
+                after = min(len(protein_sequence) - stop, remainder - before)
+            elif after < max_extract:
+                before = min(start, remainder - after)
+
+            # Extract the part of the protein sequence we're interested in
+            extract_start = start - before
+            extract_stop = stop + after
+            extract_sequence = protein_sequence[extract_start:extract_stop]
+            
+            data = [[peptide, extract_sequence]]
             batch_labels, batch_strs, batch_tokens = batch_converter(data)
 
-            # Compute token representations
             with torch.no_grad():
-                results = model(batch_tokens, repr_layers=[6], return_contacts=False)
-            token_representations = results["representations"][6]
+                results = model(batch_tokens, repr_layers=[33], return_contacts=False)
+            token_representations = results["representations"][33]
 
-            # Extract the 9-mer peptide sequence representation
-            # The sequence tokens are given an extra start and end token, 
-            # so we add 1 to the start and stop indices to account for the start token
-            peptide_representation = token_representations[0, start + 1:stop + 1]
+            # Identify indices of CLS and EOS tokens
+            cls_idx = (batch_tokens == model.cls_idx).nonzero(as_tuple=True)[1]
+            eos_idx = (batch_tokens == model.eos_idx).nonzero(as_tuple=True)[1]
+
+            # Exclude CLS and EOS tokens from the token representations
+            token_representations = token_representations[0, cls_idx+1:eos_idx]
+            assert len(extract_sequence) == len(token_representations), f"Expected length of sequence ({len(extract_sequence)}) to be equal to the length of the representation ({len(token_representations)})"
+
+            # The peptide is now at a new position in the sequence
+            new_start = before
+            new_stop = new_start + 9
+            assert extract_sequence[new_start:new_stop] == peptide, f"Expected {peptide} at position {start}-{stop}, but found {extract_sequence[new_start:new_stop]}"
             
-            # Assuming you're running this on a GPU. If not, you can remove the .cpu()
-            Xout[peptide_index] = peptide_representation.cpu().numpy()  
+            # Check that the peptide sequence is in the expected location
+            peptide_representation = token_representations[new_start:new_stop]
+            Xout[peptide_index] = peptide_representation.cpu().numpy()
 
     return Xout, Xin.target.values
 
@@ -154,78 +189,45 @@ def invoke(early_stopping, loss, model, implement=False):
             print("Early stopping")
             return True
 
-
-
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-# ## Arguments
-
+## Arguments
 MAX_PEP_SEQ_LEN = 9 
 BINDER_THRESHOLD = 0.426
 
-
 # # Main
-
 # ## Load
-
-### Windows path corrector
-windows_path = os.getcwd()
-linux_path = windows_path.replace('\\', '/')
-working_dir = linux_path
-
-
-# ESM-1 and Blosum62 need to be in working directory
-blosum_file_62 = working_dir + "/BLOSUM62"
-ESM_1_file = working_dir + "/ESM-1"
-
-# Files for debugging
-#train_data = working_dir + "/../data/%s/train_BA" % ALLELE
-#valid_data = working_dir + "/../data/%s/valid_BA" % ALLELE
+# Blosum62 need to be in working directory
+blosum_file_62 = "../data/matrices/BLOSUM62"
 
 # Files for training
 train_data = training_file
 valid_data = evaluation_file
 
+# Extract peptide and target values
+train_raw = load_peptide_target(train_data, encoder_flag)
+valid_raw = load_peptide_target(valid_data, encoder_flag)
 
-train_raw = load_peptide_target(train_data)
-valid_raw = load_peptide_target(valid_data)
-
-
-# ### Encode data
-
-# For debugging
-# encoder_flag = 'blosum'
-
+### Encode data
 x_train_, y_train_ = encode_peptides(train_raw, encoder_flag)
 x_valid_, y_valid_ = encode_peptides(valid_raw, encoder_flag)
 
-# Check the data dimensions for the train set and validation set (batch_size, MAX_PEP_SEQ_LEN, n_features)
-
-#print(x_train_.shape)
-#print(x_valid_.shape)
-
-
-# ### Flatten tensors
+### Flatten tensors
 x_train_ = x_train_.reshape(x_train_.shape[0], -1)
 x_valid_ = x_valid_.reshape(x_valid_.shape[0], -1)
-
-
-
 batch_size = x_train_.shape[0]
 n_features = x_train_.shape[1]
 
-
-# ### Make data iterable
+### Make data iterable
 x_train = Variable(torch.from_numpy(x_train_.astype('float32')))
 y_train = Variable(torch.from_numpy(y_train_.astype('float32'))).view(-1, 1)
 
 x_valid = Variable(torch.from_numpy(x_valid_.astype('float32')))
 y_valid = Variable(torch.from_numpy(y_valid_.astype('float32'))).view(-1, 1)
 
-
-# ## Build Model
+## Build Model
 class Net(nn.Module):
 
     def __init__(self, n_features, n_l1):
@@ -261,6 +263,14 @@ LEARNING_RATE = epsilon
 PATIENCE = EPOCHS // 10
 
 
+# ### Path where to save model
+model_dir = "models/"
+os.makedirs(model_dir, exist_ok=True)
+model_filename = "%s_%s_%s_%s_net.pt" % (allele, encoder_flag, cycle_numbers[0], cycle_numbers[1])
+perf_filename = "%s_%s_%s_%s_perf.txt" % (allele, encoder_flag, cycle_numbers[0], cycle_numbers[1])
+model_PATH = model_dir + model_filename
+perf_PATH = model_dir + perf_filename
+
 # ## Compile Model
 
 net = Net(n_features, N_HIDDEN_NEURONS)
@@ -276,10 +286,10 @@ criterion = nn.MSELoss()
 
 # No mini-batch loading
 # mini-batch loading
-def train():
+def train(output_file):
     train_loss, valid_loss = [], []
 
-    early_stopping = EarlyStopping(patience=PATIENCE)
+    early_stopping = EarlyStopping(patience=PATIENCE, path=model_PATH)
 
     for epoch in range(EPOCHS):
         net.train()
@@ -290,8 +300,8 @@ def train():
         optimizer.step()
         train_loss.append(loss.data)
 
-        if epoch % (EPOCHS//10) == 0:
-            print('Train Epoch: {}\tLoss: {:.6f}'.format(epoch, loss.data))
+        #if epoch % (EPOCHS//10) == 0:
+            #print('Train Epoch: {}\tLoss: {:.6f}'.format(epoch, loss.data))
 
         net.eval()
         pred = net(x_valid)
@@ -299,7 +309,8 @@ def train():
         valid_loss.append(loss.data)
 
         if invoke(early_stopping, valid_loss[-1], net, implement=True):
-            net.load_state_dict(torch.load('checkpoint.pt'))
+            print(valid_loss[-1])
+            net.load_state_dict(torch.load(model_PATH))
             break
             
     return net, train_loss, valid_loss
@@ -310,11 +321,11 @@ def train():
 train_loader = DataLoader(dataset=TensorDataset(x_train, y_train), batch_size=MINI_BATCH_SIZE, shuffle=True)
 valid_loader = DataLoader(dataset=TensorDataset(x_valid, y_valid), batch_size=MINI_BATCH_SIZE, shuffle=True)
 
-def train_with_minibatches():
+def train_with_minibatches(output_file):
     
     train_loss, valid_loss = [], []
 
-    early_stopping = EarlyStopping(patience=PATIENCE)
+    early_stopping = EarlyStopping(patience=PATIENCE, path=model_PATH)
     for epoch in range(EPOCHS):
         batch_loss = 0
         net.train()
@@ -337,23 +348,18 @@ def train_with_minibatches():
         
         if epoch % (EPOCHS//10) == 0:
             print('Train Epoch: {}\tLoss: {:.6f}\tVal Loss: {:.6f}'.format(epoch, train_loss[-1], valid_loss[-1]))
-
+            with open(perf_PATH, 'w') as f:
+                f.write('Val Loss: {:.6f}'.format(valid_loss[-1]))  
+                
         if invoke(early_stopping, valid_loss[-1], net, implement=True):
-            net.load_state_dict(torch.load('checkpoint.pt'))
+            net.load_state_dict(torch.load(model_PATH))
             break
-            
+          
     return net, train_loss, valid_loss
 
 
 # ### Train model
-
-#net, train_loss, valid_loss = train()                   # no mini-batch loading
-net, train_loss, valid_loss = train_with_minibatches()   # mini-batch loading
-
-
-# ### Save model
-model_dir = working_dir + "/../models/%s/%s/" % (allele, encoder_flag)
-os.makedirs(model_dir, exist_ok=True)
-model_filename = "%s_%s_net.pt" % (allele, encoder_flag)
-torch.save(net.state_dict(), model_dir + model_filename)
-
+if mini_batches:
+    net, train_loss, valid_loss = train_with_minibatches(perf_PATH)   # mini-batch loading
+else:
+    net, train_loss, valid_loss = train(perf_PATH)   # no mini-batch loading
