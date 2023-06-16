@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # coding: utf-8
 
 # # Train a neural network to predict MHC ligands
@@ -18,6 +18,8 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import roc_curve, auc, matthews_corrcoef
 from argparse import ArgumentParser
 
+# Set the device to use GPU if available
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 parser = ArgumentParser(description="FFNN_model python program")
 parser.add_argument("-p", action="store", dest="path", type=str, help="Path to training files and results")
@@ -125,6 +127,7 @@ def encode_peptides(Xin, encoder_flag):
         
         # Load ESM-1b model
         model, alphabet = esm.pretrained.esm1b_t33_650M_UR50S()
+        model = model.to(device)
         batch_converter = alphabet.get_batch_converter()
         
         n_features = model.args.embed_dim  # ESM model's embedding dimension
@@ -155,6 +158,7 @@ def encode_peptides(Xin, encoder_flag):
             
             data = [[peptide, extract_sequence]]
             batch_labels, batch_strs, batch_tokens = batch_converter(data)
+            batch_tokens = batch_tokens.to(device)
 
             with torch.no_grad():
                 results = model(batch_tokens, repr_layers=[33], return_contacts=False)
@@ -228,7 +232,7 @@ y_train = Variable(torch.from_numpy(y_train_.astype('float32'))).view(-1, 1)
 x_valid = Variable(torch.from_numpy(x_valid_.astype('float32')))
 y_valid = Variable(torch.from_numpy(y_valid_.astype('float32'))).view(-1, 1)
 
-## Build Model
+# Build Model
 class Net(nn.Module):
 
     def __init__(self, n_features, n_l1):
@@ -272,19 +276,18 @@ perf_filename = "%s_%s_%s_%s_perf.txt" % (allele, encoder_flag, cycle_numbers[0]
 model_PATH = os.path.join(model_dir, model_filename)
 
 # ## Compile Model
-net = Net(n_features, N_HIDDEN_NEURONS)
-#net.apply(init_weights)
-
-#count_parameters(net)
+# Compile Model
+net = Net(n_features, N_HIDDEN_NEURONS).to(device)
 optimizer = optim.SGD(net.parameters(), lr=LEARNING_RATE)
 criterion = nn.MSELoss()
 
-
-# ## Train Model
+## Train Model
 
 # No mini-batch loading
 # mini-batch loading
 def train():
+    x_train, y_train = x_train.to(device), y_train.to(device)
+    x_valid, y_valid = x_valid.to(device), y_valid.to(device)
     train_loss, valid_loss = [], []
 
     early_stopping = EarlyStopping(patience=PATIENCE, 
@@ -334,6 +337,7 @@ def train_with_minibatches():
         batch_loss = 0
         net.train()
         for x_train, y_train in train_loader:
+            x_train, y_train = x_train.to(device), y_train.to(device)
             pred = net(x_train)
             loss = criterion(pred, y_train)
             optimizer.zero_grad()

@@ -114,6 +114,7 @@ def encode_peptides(Xin, encoder_flag):
         
         # Load ESM-1b model
         model, alphabet = esm.pretrained.esm1b_t33_650M_UR50S()
+        model = model.to(device)
         batch_converter = alphabet.get_batch_converter()
         
         n_features = model.args.embed_dim  # ESM model's embedding dimension
@@ -144,6 +145,7 @@ def encode_peptides(Xin, encoder_flag):
             
             data = [[peptide, extract_sequence]]
             batch_labels, batch_strs, batch_tokens = batch_converter(data)
+            batch_tokens = batch_tokens.to(device)
 
             with torch.no_grad():
                 results = model(batch_tokens, repr_layers=[33], return_contacts=False)
