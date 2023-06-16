@@ -1,19 +1,13 @@
 #!/usr/bin/env python
 # coding: utf-8
-
-# In[3]:
-
-
 import numpy as np
 import torch
-
-
-# In[4]:
-
+import os
 
 class EarlyStopping:
     """Early stops the training if validation loss doesn't improve after a given patience."""
-    def __init__(self, patience=7, verbose=False, delta=0, path='checkpoint.pt'):
+    def __init__(self, patience=7, verbose=False, delta=0, path="", 
+                 model_filename="checkpoint.pt", perf_filename="val_error.txt"):
         """
         Args:
             patience (int): How long to wait after last time validation loss improved.
@@ -33,6 +27,8 @@ class EarlyStopping:
         self.val_loss_min = np.Inf
         self.delta = delta
         self.path = path
+        self.model_filename = model_filename
+        self.perf_filename = perf_filename
 
     def __call__(self, val_loss, model):
 
@@ -51,16 +47,15 @@ class EarlyStopping:
             self.save_checkpoint(val_loss, model)
             self.counter = 0
 
+
     def save_checkpoint(self, val_loss, model):
         '''Saves model when validation loss decrease.'''
         if self.verbose:
             print(f'Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).  Saving model ...')
-        torch.save(model.state_dict(), self.path)
+        torch.save(model.state_dict(), os.path.join(self.path, self.model_filename))
         self.val_loss_min = val_loss
-
-
-# In[ ]:
-
+        with open(os.path.join(self.path, self.perf_filename), 'w') as file:
+            file.write(f'{val_loss}\n')
 
 
 
