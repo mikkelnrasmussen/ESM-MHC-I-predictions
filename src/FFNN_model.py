@@ -20,6 +20,7 @@ from argparse import ArgumentParser
 
 # Set the device to use GPU if available
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+print(device)
 
 parser = ArgumentParser(description="FFNN_model python program")
 parser.add_argument("-p", action="store", dest="path", type=str, help="Path to training files and results")
@@ -344,15 +345,16 @@ def train_with_minibatches():
             loss.backward()
             optimizer.step()
             batch_loss += loss.data
-        train_loss.append(batch_loss / len(train_loader))
+        train_loss.append((batch_loss / len(train_loader)).cpu())
 
         batch_loss = 0
         net.eval()
         for x_valid, y_valid in valid_loader:
+            x_valid, y_valid = x_valid.to(device), y_valid.to(device)
             pred = net(x_valid)
             loss = criterion(pred, y_valid)
             batch_loss += loss.data
-        valid_loss.append(batch_loss / len(valid_loader))
+        valid_loss.append((batch_loss / len(valid_loader)).cpu())
         
         if verbose:
             if epoch % (EPOCHS//10) == 0:
