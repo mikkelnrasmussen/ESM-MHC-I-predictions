@@ -12,9 +12,11 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.metrics import roc_curve, auc, matthews_corrcoef
-
 from argparse import ArgumentParser
 
+# Set the device to use GPU if available
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+print(device)
 
 parser = ArgumentParser(description="FFNN_evaluation python program")
 parser.add_argument("-p", action="store", dest="input_path", type=str, help="Path to training files")
@@ -244,12 +246,15 @@ if test_file == "test":
     
 
 # ### Load model
-net = Net(n_features, N_HIDDEN_NEURONS)
+net = Net(n_features, N_HIDDEN_NEURONS).to(device)
 net.load_state_dict(torch.load(model_PATH))
 
 # ### Predict on test set
 net.eval()
+x_test, y_test = x_test.to(device), y_test.to(device)
 pred = net(x_test)
+pred = pred.cpu()
+y_test = y_test.cpu()
 loss = criterion(pred, y_test)
 
 
