@@ -20,7 +20,7 @@ from argparse import ArgumentParser
 
 
 parser = ArgumentParser(description="FFNN_model python program")
-
+parser.add_argument("-p", action="store", dest="path", type=str, help="Path to training files and results")
 parser.add_argument("-t", action="store", dest="training_file", type=str, help="File with training data")
 parser.add_argument("-e", action="store", dest="evaluation_file", type=str, help="File with evaluation data")
 parser.add_argument("-epi", action="store", dest="epsilon", type=float, default=0.01, help="Epsilon (default 0.01)")
@@ -28,12 +28,14 @@ parser.add_argument("-s", action="store", dest="seed", type=int, default=1, help
 parser.add_argument("-i", action="store", dest="epochs", type=int, default=3000, help="Number of epochs to train (default 3000)")
 parser.add_argument("-ef", action="store", dest="encoder_flag", type=str, help="Type of encoder used for the model (blosum, sparse, ESM)")
 parser.add_argument("-a", action="store", dest="allele", type=str, help="Allele ID (e.g A0201,...)")
-parser.add_argument("-m", action="store_true", dest="mini_batches", type=str, help="Use mini-batches for gradient decent training")
+parser.add_argument("-m", action="store_true", dest="mini_batches", help="Use mini-batches for gradient decent training")
 parser.add_argument("-stop", action="store_true", dest="early_stopping", help="Use Early stopping")
 parser.add_argument("-nh", action="store", dest="hidden_layer_dim", type=int, default=32, help="Number of hidden neurons (default 32)")
 parser.add_argument("--numbers", type=int, nargs='*', help="Supply the cycle numbers from bash to help name files")
+parser.add_argument("-v", action="store_true", dest="verbose", help="Print messages during training")
 
 args, unknown = parser.parse_known_args()
+path = args.path
 encoder_flag = args.encoder_flag
 training_file = args.training_file
 evaluation_file = args.evaluation_file
@@ -45,7 +47,7 @@ early_stopping = args.early_stopping
 hidden_layer_dim = args.hidden_layer_dim
 allele = args.allele
 cycle_numbers = args.numbers
-
+verbose = args.verbose
 
 SEED= seed
 np.random.seed(SEED)
@@ -77,10 +79,10 @@ def load_peptide_target(filename, encoder_flag):
     Read amino acid sequence of peptides and
     corresponding log transformed IC50 binding values from text file.
     """
-    if encoder_flag != "ESM":
+    if encoder_flag in ["sparse", "blosum"]:
         df = pd.read_csv(filename, 
                          sep = "\s+", 
-                         usecols = [0,1], 
+                         usecols = [0, 2], 
                          names = ["peptide", "target"])
     else:
         df = pd.read_csv(filename, 
@@ -202,8 +204,8 @@ BINDER_THRESHOLD = 0.426
 blosum_file_62 = "../data/matrices/BLOSUM62"
 
 # Files for training
-train_data = training_file
-valid_data = evaluation_file
+train_data = os.path.join(path, training_file)
+valid_data = os.path.join(path, evaluation_file)
 
 # Extract peptide and target values
 train_raw = load_peptide_target(train_data, encoder_flag)
@@ -263,20 +265,17 @@ PATIENCE = EPOCHS // 10
 
 
 # ### Path where to save model
-model_dir = "models/"
+model_dir = os.path.join(path, "models")
 os.makedirs(model_dir, exist_ok=True)
 model_filename = "%s_%s_%s_%s_net.pt" % (allele, encoder_flag, cycle_numbers[0], cycle_numbers[1])
 perf_filename = "%s_%s_%s_%s_perf.txt" % (allele, encoder_flag, cycle_numbers[0], cycle_numbers[1])
-model_PATH = model_dir + model_filename
-perf_PATH = model_dir + perf_filename
+model_PATH = os.path.join(model_dir, model_filename)
 
 # ## Compile Model
-
 net = Net(n_features, N_HIDDEN_NEURONS)
 #net.apply(init_weights)
 
 #count_parameters(net)
-
 optimizer = optim.SGD(net.parameters(), lr=LEARNING_RATE)
 criterion = nn.MSELoss()
 
@@ -285,10 +284,13 @@ criterion = nn.MSELoss()
 
 # No mini-batch loading
 # mini-batch loading
-def train(output_file):
+def train():
     train_loss, valid_loss = [], []
 
-    early_stopping = EarlyStopping(patience=PATIENCE, path=model_PATH)
+    early_stopping = EarlyStopping(patience=PATIENCE, 
+                                   path=model_dir, 
+                                   model_filename=model_filename,
+                                   perf_filename=perf_filename)
 
     for epoch in range(EPOCHS):
         net.train()
@@ -299,16 +301,16 @@ def train(output_file):
         optimizer.step()
         train_loss.append(loss.data)
 
-        #if epoch % (EPOCHS//10) == 0:
-            #print('Train Epoch: {}\tLoss: {:.6f}'.format(epoch, loss.data))
-
         net.eval()
         pred = net(x_valid)
         loss = criterion(pred, y_valid)  
         valid_loss.append(loss.data)
+        
+        if verbose:
+            if epoch % (EPOCHS//10) == 0:
+                print('Train Epoch: {}\tLoss: {:.6f}\tVal Loss: {:.6f}'.format(epoch, train_loss[-1], valid_loss[-1])) 
 
         if invoke(early_stopping, valid_loss[-1], net, implement=True):
-            print(valid_loss[-1])
             net.load_state_dict(torch.load(model_PATH))
             break
             
@@ -320,11 +322,14 @@ def train(output_file):
 train_loader = DataLoader(dataset=TensorDataset(x_train, y_train), batch_size=MINI_BATCH_SIZE, shuffle=True)
 valid_loader = DataLoader(dataset=TensorDataset(x_valid, y_valid), batch_size=MINI_BATCH_SIZE, shuffle=True)
 
-def train_with_minibatches(output_file):
+def train_with_minibatches():
     
     train_loss, valid_loss = [], []
 
-    early_stopping = EarlyStopping(patience=PATIENCE, path=model_PATH)
+    early_stopping = EarlyStopping(patience=PATIENCE, 
+                                   path=model_dir, 
+                                   model_filename=model_filename,
+                                   perf_filename=perf_filename)
     for epoch in range(EPOCHS):
         batch_loss = 0
         net.train()
@@ -345,10 +350,9 @@ def train_with_minibatches(output_file):
             batch_loss += loss.data
         valid_loss.append(batch_loss / len(valid_loader))
         
-        if epoch % (EPOCHS//10) == 0:
-            print('Train Epoch: {}\tLoss: {:.6f}\tVal Loss: {:.6f}'.format(epoch, train_loss[-1], valid_loss[-1]))
-            with open(perf_PATH, 'w') as f:
-                f.write('Val Loss: {:.6f}'.format(valid_loss[-1]))  
+        if verbose:
+            if epoch % (EPOCHS//10) == 0:
+                print('Train Epoch: {}\tLoss: {:.6f}\tVal Loss: {:.6f}'.format(epoch, train_loss[-1], valid_loss[-1])) 
                 
         if invoke(early_stopping, valid_loss[-1], net, implement=True):
             net.load_state_dict(torch.load(model_PATH))
@@ -359,6 +363,22 @@ def train_with_minibatches(output_file):
 
 # ### Train model
 if mini_batches:
-    net, train_loss, valid_loss = train_with_minibatches(perf_PATH)   # mini-batch loading
+    net, train_loss, valid_loss = train_with_minibatches()   # mini-batch loading
 else:
-    net, train_loss, valid_loss = train(perf_PATH)   # no mini-batch loading
+    net, train_loss, valid_loss = train()   # no mini-batch loading
+
+plot_filname = os.path.join(model_dir, "%s_%s_%s_%s_train_val_curve.png" % (allele, encoder_flag, cycle_numbers[0], cycle_numbers[1]))
+def plot_losses(burn_in=20, path="train_val_curve.png"):
+    plt.figure(figsize=(15,4))
+    plt.plot(list(range(burn_in, len(train_loss))), train_loss[burn_in:], label='Training loss')
+    plt.plot(list(range(burn_in, len(valid_loss))), valid_loss[burn_in:], label='Validation loss')
+
+    # find position of lowest validation loss
+    minposs = valid_loss.index(min(valid_loss))+1 
+    plt.axvline(minposs, linestyle='--', color='r',label='Minimum Validation Loss')
+
+    plt.legend(frameon=False)
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.savefig(path)
+plot_losses(path = plot_filname)
