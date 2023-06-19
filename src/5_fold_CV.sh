@@ -11,6 +11,8 @@ for e in sparse blosum ESM
 do  
     # Here you can type your allele names
     for a in A0101 A0201 A0202 A0203 A0206 A3001 A1101 A2402 A2403 A2601 A2902 A3001 A3002 A3101 A3301 A6801 A6802 A6901 B0702 B0801 B1501 B1801 B2705 B3501 B4001 B4002 B4402 B4403 B4501 B5101 B5301 B5401 B5701 B5801
+    #for a in A6801 A6802 A6901 B0702 B0801
+    #for a in B5701
     do
 
         mkdir -p $RDIR/$a/$e
@@ -44,9 +46,9 @@ do
             rm -r $RDIR/$a/$e/models
             
             # Run evalaution evaluation
-            $HOME/python3.11/bin/python3 $RDIR/FFNN_eval.py -ef $e -p $RDIR/$a/$e -o $ResDIR/$a/$e -t test -a $a --numbers $n -m $model
+            python3 $RDIR/FFNN_eval.py -ef $e -p $RDIR/$a/$e -o $ResDIR/$a/$e -t test -a $a --numbers $n -m $model
         
         done
-        rm -rf $RDIR/$a
+        #rm -rf $RDIR/$a
     done
 done
