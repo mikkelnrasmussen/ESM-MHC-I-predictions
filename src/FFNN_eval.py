@@ -216,7 +216,7 @@ class Net(nn.Module):
 
     def forward(self, x):
         x = self.relu(self.fc1(x))
-        x = self.fc2(x)
+        x = self.sigmoid(self.fc2(x))
         return x
 
 
@@ -254,6 +254,7 @@ net.eval()
 x_test, y_test = x_test.to(device), y_test.to(device)
 pred = net(x_test)
 pred = pred.cpu()
+print(pred)
 y_test = y_test.cpu()
 loss = criterion(pred, y_test)
 
