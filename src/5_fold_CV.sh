@@ -7,46 +7,46 @@ ResDIR="/zhome/62/8/145783/s193518/ESM-MHC-I-predictions/results"
 ## IMPORTANT NOTE: Remember to set the data directory before running the code
 DDIR="/zhome/62/8/145783/s193518/ESM-MHC-I-predictions/data/processed_data"
 
-for e in sparse blosum ESM
+for e in blosum #sparse ESM
 do  
     # Here you can type your allele names
     for a in A0101 A0201 A0202 A0203 A0206 A3001 A1101 A2402 A2403 A2601 A2902 A3001 A3002 A3101 A3301 A6801 A6802 A6901 B0702 B0801 B1501 B1801 B2705 B3501 B4001 B4002 B4402 B4403 B4501 B5101 B5301 B5401 B5701 B5801
-    #for a in A6801 A6802 A6901 B0702 B0801
-    #for a in B5701
+    #for a in A0101 A0201 A0202 A0203
+    #for a in A0206 A3001 A1101 A2402
     do
 
-        mkdir -p $RDIR/$a/$e
-        mkdir -p $ResDIR/$a/$e
+        mkdir -p $RDIR/$a/$e"_with_sigmoid"
+        mkdir -p $ResDIR/$a/$e"_with_sigmoid"
 
         for n in 0 1 2 3 4
         do
-            cat $DDIR/$a/c00$n > $RDIR/$a/$e/test
+            cat $DDIR/$a/c00$n > $RDIR/$a/$e"_with_sigmoid"/test
             
             for m in `echo $n | gawk '{for ( i=0; i<5; i++ ) { if ( i != $1) { print i}}}'`
             do
-                cat $DDIR/$a/c00$m > $RDIR/$a/$e/eval
+                cat $DDIR/$a/c00$m > $RDIR/$a/$e"_with_sigmoid"/eval
 
-                touch $RDIR/$a/$e/train
-                rm -f $RDIR/$a/$e/train
+                touch $RDIR/$a/$e"_with_sigmoid"/train
+                rm -f $RDIR/$a/$e"_with_sigmoid"/train
 
                 for l in `echo $n $m | gawk '{ for ( i=0; i<5; i++ ) { if ( i != $1 && i != $2) { print i}}}'`
                 do
-                    cat $DDIR/$a/c00$l >> $RDIR/$a/$e/train
+                    cat $DDIR/$a/c00$l >> $RDIR/$a/$e"_with_sigmoid"/train
                 done
                 #run train-code
-                python3 $RDIR/FFNN_model.py -ef $e -m -p $RDIR/$a/$e -t train -e eval  -a $a --numbers $n $m
-                python3 $RDIR/FFNN_eval.py -ef $e -p $RDIR/$a/$e -o $RDIR/$a/$e -t eval -m $RDIR/$a/$e/models/${a}_${e}_${n}_${m}_net.pt -a $a --numbers $n $m
+                python3 $RDIR/FFNN_model.py -ef $e -m -p $RDIR/$a/$e"_with_sigmoid" -t train -e eval  -a $a --numbers $n $m
+                python3 $RDIR/FFNN_eval.py -ef $e -p $RDIR/$a/$e"_with_sigmoid" -o $RDIR/$a/$e"_with_sigmoid" -t eval -m $RDIR/$a/$e"_with_sigmoid"/models/${a}_${e}_${n}_${m}_net.pt -a $a --numbers $n $m
             done
             # Finding the best model from the m-loop and discarding all the others
             # Currently this only saves the model - not any of the other data. If that should be changed then let me know
-            python3 $RDIR/find_best_model.py -d $RDIR/$a/$e/models/ -o $ResDIR/$a/$e/
-            model=$(find $ResDIR/$a/$e/best_models/ -maxdepth 1 -name "${a}_${e}_${n}_*")
+            python3 $RDIR/find_best_model.py -d $RDIR/$a/$e"_with_sigmoid"/models/ -o $ResDIR/$a/$e"_with_sigmoid"/
+            model=$(find $ResDIR/$a/$e"_with_sigmoid"/best_models/ -maxdepth 1 -name "${a}_${e}_${n}_*")
             
             # Removing the models directory since keeping that around is not necesarry once the new model has been moved (?)
-            rm -r $RDIR/$a/$e/models
+            rm -r $RDIR/$a/$e"_with_sigmoid"/models
             
             # Run evalaution evaluation
-            python3 $RDIR/FFNN_eval.py -ef $e -p $RDIR/$a/$e -o $ResDIR/$a/$e -t test -a $a --numbers $n -m $model
+            python3 $RDIR/FFNN_eval.py -ef $e -p $RDIR/$a/$e"_with_sigmoid" -o $ResDIR/$a/$e"_with_sigmoid" -t test -a $a --numbers $n -m $model
         
         done
         #rm -rf $RDIR/$a
