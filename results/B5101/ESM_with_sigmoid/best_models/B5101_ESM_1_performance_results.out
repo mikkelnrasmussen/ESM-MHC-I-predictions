@@ -1,0 +1,3 @@
+The model: 1_4_net.pt. Yielded the following:
+AUC: 0.8885941644562335
+MCC: 0.4721697756975007
