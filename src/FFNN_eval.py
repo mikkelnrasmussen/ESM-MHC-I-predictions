@@ -254,7 +254,6 @@ net.eval()
 x_test, y_test = x_test.to(device), y_test.to(device)
 pred = net(x_test)
 pred = pred.cpu()
-print(pred)
 y_test = y_test.cpu()
 loss = criterion(pred, y_test)
 
