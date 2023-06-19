@@ -7,10 +7,10 @@ ResDIR="/zhome/62/8/145783/s193518/ESM-MHC-I-predictions/results"
 ## IMPORTANT NOTE: Remember to set the data directory before running the code
 DDIR="/zhome/62/8/145783/s193518/ESM-MHC-I-predictions/data/processed_data"
 
-for e in blosum sparse ESM 
+for e in ESM #blosum sparse
 do  
     # Here you can type your allele names
-    for a in A0101 A0201 A0202 A0203 A0206 A0301 A1101 A2402 A2403 A2601 A2902 A3001 A3002 A3101 A3301 A6801 A6802 A6901 B0702 B0801 B1501 B1801 B2705 B3501 B4001 B4002 B4402 B4403 B4501 B5101 B5301 B5401 B5701 B5801
+    for a in B1501 B1801 B2705 B3501 B4001
     do
 
         mkdir -p $RDIR/$a/$e"_with_sigmoid"
